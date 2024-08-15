@@ -5,7 +5,8 @@ This script renames image files in a specified directory based on extracted text
 It supports various image formats and allows for preprocessing such as skipping certain files and resolving naming conflicts.
 It also converts HEIC files to JPG before processing and preserves the metadata. The --COMPRESS argument converts all images 
 to JPG, copies EXIF data, and compresses them for HD television quality. The --DATE argument prepends the date taken to the filename.
-Facial recognition is used to replace generic captions like "a Man" with the correct name if a match is found.
+Facial recognition is used to replace generic captions like "a Man" with the correct name if a match is found. The --HASH argument
+enables image hashing to detect duplicates and move them to a `DUPLICATES` folder.
 
 Setup Instructions:
 1. Install required packages:
@@ -13,7 +14,7 @@ Setup Instructions:
    (Optional: pytesseract if you plan to enable OCR)
 2. Create an Azure Face API resource, and obtain the Endpoint and Subscription Key.
 3. Run the script from the command line:
-   python ImageRenamer.py <directory_path> [--DATE] [--COMPRESS]
+   python ImageRenamer.py <directory_path> [--DATE] [--COMPRESS] [--HASH]
 
 Supported Image Formats: .jpg, .jpeg, .jfif, .png, .bmp, .gif, .webp, .heic
 """
@@ -22,7 +23,8 @@ import os
 import sys
 import re
 import cv2
-import requests
+import shutil
+import hashlib
 from datetime import datetime
 from PIL import Image, ExifTags
 from pillow_heif import register_heif_opener
@@ -49,88 +51,61 @@ face_client = FaceClient(FACE_API_ENDPOINT, CognitiveServicesCredentials(FACE_AP
 # Constant for the face folder path
 FACE_FOLDER = "path_to_face_folder"  # Update this path as needed
 
-def detect_faces(image_path):
-    """Detect faces in an image and return face IDs using Azure Face API."""
+def log_message(message, log_filename="ImageRenamer_Log.txt", log_directory="."):
+    """Log a message with a timestamp to a specified log file in the target directory."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_path = os.path.join(log_directory, log_filename)
     try:
-        with open(image_path, "rb") as image_data:
-            detected_faces = face_client.face.detect_with_stream(image_data, detection_model='detection_03')
-            return [face.face_id for face in detected_faces]
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write(f"[{timestamp}] {message}\n")
     except Exception as e:
-        log_message(f"Error detecting faces in {image_path}: {e}")
-        return []
+        print(f"Error writing to log file: {e}")
 
-def match_faces(target_image_path):
-    """Match faces in the target image to the known faces in the face folder."""
+
+def create_originals_folder(directory):
+    """Create an 'ORIGINALS' folder in the specified directory."""
+    originals_path = os.path.join(directory, "ORIGINALS")
     try:
-        if not os.path.exists(FACE_FOLDER):
-            log_message(f"Face folder '{FACE_FOLDER}' does not exist. Skipping face recognition.")
-            return None
-
-        # Load known faces and their names
-        known_faces = {}
-        for filename in os.listdir(FACE_FOLDER):
-            if filename.lower().endswith(".jpg"):
-                face_image_path = os.path.join(FACE_FOLDER, filename)
-                face_ids = detect_faces(face_image_path)
-                if face_ids:
-                    known_faces[face_ids[0]] = os.path.splitext(filename)[0]  # Assume one face per image
-
-        # Detect faces in the target image
-        target_face_ids = detect_faces(target_image_path)
-
-        # Attempt to match each face in the target image to the known faces
-        for target_face_id in target_face_ids:
-            results = face_client.face.find_similar(face_id=target_face_id, face_ids=list(known_faces.keys()))
-            if results:
-                matched_face_id = results[0].face_id
-                matched_name = known_faces[matched_face_id]
-                return matched_name
-
-        return None
+        if not os.path.exists(originals_path):
+            os.makedirs(originals_path)
+        return originals_path
     except Exception as e:
-        log_message(f"Error matching faces in {target_image_path}: {e}")
+        log_message(f"Error creating ORIGINALS folder in {directory}: {e}")
         return None
 
-def convert_to_jpg(image_path):
-    """Convert any supported image format to JPG while preserving metadata and compressing it."""
+def move_to_originals(file_path, originals_folder):
+    """Move the original file to the 'ORIGINALS' folder, ensuring no filename conflicts."""
     try:
-        image = Image.open(image_path)
-        
-        # Extract the EXIF data from the image
-        exif_data = image.info.get('exif')
-        
-        # Convert image to JPG path
-        jpg_path = os.path.splitext(image_path)[0] + ".jpg"
-        
-        # Save the image as JPG with the EXIF data, compressing it for HD television quality
-        image.save(jpg_path, "JPEG", exif=exif_data, quality=85)  # 85 is a good balance for quality and compression
-        
-        log_message(f"Converted and compressed {image_path} to {jpg_path}")
-        return jpg_path
-    except Exception as e:
-        log_message(f"Error converting {image_path} to JPG: {e}")
-        return None
+        # Ensure the destination filename is unique by appending a date-time stamp if needed
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        extension = os.path.splitext(file_path)[1]
+        dest_path = os.path.join(originals_folder, os.path.basename(file_path))
 
-def compress_jpg(image_path):
-    """Compress an existing JPG image."""
+        # If the file already exists in the ORIGINALS folder, append a timestamp
+        if os.path.exists(dest_path):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_base_name = f"{base_name}_{timestamp}"
+            dest_path = os.path.join(originals_folder, new_base_name + extension)
+
+        shutil.move(file_path, dest_path)
+        log_message(f"Moved {file_path} to {dest_path}")
+    except Exception as e:
+        log_message(f"Error moving {file_path} to {originals_folder}: {e}")
+
+def hash_image(image_path):
+    """Compute a hash for the image to identify duplicates."""
     try:
         image = Image.open(image_path)
-        
-        # Extract the EXIF data from the image
-        exif_data = image.info.get('exif')
-        
-        # Compress the image
-        compressed_path = os.path.splitext(image_path)[0] + "_compressed.jpg"
-        image.save(compressed_path, "JPEG", exif=exif_data, quality=85)  # 85 is a good balance for quality and compression
-        
-        log_message(f"Compressed {image_path} to {compressed_path}")
-        return compressed_path
+        hash_obj = hashlib.md5()
+        for chunk in iter(lambda: image.tobytes(), b""):
+            hash_obj.update(chunk)
+        return hash_obj.hexdigest()
     except Exception as e:
-        log_message(f"Error compressing {image_path}: {e}")
+        log_message(f"Error hashing image {image_path}: {e}")
         return None
 
-def convert_heic_to_jpg(image_path):
-    """Convert a HEIC image to JPG format while preserving metadata."""
+def convert_heic_to_jpg(image_path, originals_folder):
+    """Convert a HEIC image to JPG format while preserving metadata and move the original HEIC file to the 'ORIGINALS' folder."""
     try:
         # Open the HEIC image using Pillow
         image = Image.open(image_path)
@@ -143,12 +118,34 @@ def convert_heic_to_jpg(image_path):
         
         # Save the image as JPG with the EXIF data
         image.save(jpg_path, "JPEG", exif=exif_data)
+
+        # Move the original HEIC file to the 'ORIGINALS' folder
+        move_to_originals(image_path, originals_folder)
         
-        log_message(f"Converted {image_path} to {jpg_path} with metadata preserved")
+        log_message(f"Converted {image_path} to {jpg_path} with metadata preserved and moved original HEIC to {originals_folder}")
         return jpg_path
     except Exception as e:
         log_message(f"Error converting HEIC to JPG for {image_path}: {e}")
         return None
+    
+def compress_jpg(image_path, quality=85, max_resolution=(1920, 1080)):
+    """Compress an existing JPG image with adjustable quality and resolution."""
+    try:
+        image = Image.open(image_path)
+        
+        # Resize the image if it's larger than the specified max resolution
+        image.thumbnail(max_resolution, Image.Resampling.LANCZOS)
+        
+        # Compress the image
+        compressed_path = os.path.splitext(image_path)[0] + "_compressed.jpg"
+        image.save(compressed_path, "JPEG", quality=quality)  # Adjust quality for more compression
+        
+        log_message(f"Compressed {image_path} to {compressed_path} with quality={quality} and resolution={max_resolution}")
+        return compressed_path
+    except Exception as e:
+        log_message(f"Error compressing {image_path}: {e}")
+        return None
+
 
 def extract_text_from_image(image_path):
     """Extract text from an image using OCR (placeholder, as OCR is disabled)."""
@@ -213,18 +210,31 @@ def resolve_conflict(directory, base_name, fileext):
             return new_filename
         counter += 1
 
-def log_message(message, log_filename="ImageRenamer_Log.txt", log_directory="."):
-    """Log a message with a timestamp to a specified log file in the target directory."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_path = os.path.join(log_directory, log_filename)
-    try:
-        with open(log_path, "a", encoding="utf-8") as log_file:
-            log_file.write(f"[{timestamp}] {message}\n")
-    except Exception as e:
-        print(f"Error writing to log file: {e}")
 
-def process_images(directory, prepend_date=False, compress=False):
-    """Process images in the specified directory: rename them based on extracted text and generated captions."""
+def move_to_originals(file_path, originals_folder):
+    """Move the original file to the 'ORIGINALS' folder, ensuring no filename conflicts."""
+    try:
+        # Ensure the destination filename is unique by appending a date-time stamp if needed
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        extension = os.path.splitext(file_path)[1]
+        dest_path = os.path.join(originals_folder, os.path.basename(file_path))
+
+        # If the file already exists in the ORIGINALS folder, append a timestamp
+        if os.path.exists(dest_path):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            new_base_name = f"{base_name}_{timestamp}"
+            dest_path = os.path.join(originals_folder, new_base_name + extension)
+
+        shutil.move(file_path, dest_path)
+        log_message(f"Moved {file_path} to {dest_path}")
+    except Exception as e:
+        log_message(f"Error moving {file_path} to {originals_folder}: {e}")
+        
+
+def process_images(directory, prepend_date=False, compress=False, hashimages=False):
+    """Process images in the specified directory: rename them based on extracted text and generated captions,
+    compress them, and remove duplicates."""
+    
     files_exist = any(
         file.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
         for file in os.listdir(directory)
@@ -235,72 +245,106 @@ def process_images(directory, prepend_date=False, compress=False):
         print("No image files found with supported extensions.")
         return  # Exit the function if no matching files are found
 
+    originals_folder = create_originals_folder(directory)
+    duplicates_folder = os.path.join(directory, "DUPLICATES")
+    if not os.path.exists(duplicates_folder):
+        os.makedirs(duplicates_folder)
+
+    seen_hashes = {}
+
     for root, _, files in os.walk(directory):
         for file in files:
             image_path = os.path.join(root, file)
             fileext = os.path.splitext(image_path)[1].lower()
 
-            # Convert to JPG if needed (and compress if --COMPRESS is used)
-            if fileext != ".jpg" and compress:
-                image_path = convert_to_jpg(image_path)
-                if not image_path:  # Skip if conversion failed
+            # Skip the ORIGINALS and DUPLICATES folders
+            if "ORIGINALS" in root or "DUPLICATES" in root:
+                continue
+
+            if hashimages:
+                # Hash the image to detect duplicates
+                image_hash = hash_image(image_path)
+                if image_hash in seen_hashes:
+                    # Move duplicate to DUPLICATES folder
+                    try:
+                        duplicate_name = resolve_conflict(duplicates_folder, os.path.splitext(file)[0], fileext)
+                        duplicate_path = os.path.join(duplicates_folder, duplicate_name)
+                        shutil.move(image_path, duplicate_path)
+                        log_message(f"Moved duplicate {file} to {duplicate_path}", log_directory=directory)
+                    except Exception as e:
+                        log_message(f"Error moving duplicate {file} to {duplicate_path}: {e}", log_directory=directory)
                     continue
-                fileext = ".jpg"
-            elif fileext == ".jpg" and compress:
-                image_path = compress_jpg(image_path)
-                if not image_path:  # Skip if compression failed
-                    continue
+                else:
+                    seen_hashes[image_hash] = image_path
+
+            # Initially set modified flag to False
+            modified = False
 
             # Convert HEIC to JPG if needed
             if fileext == ".heic":
-                image_path = convert_heic_to_jpg(image_path)
-                if not image_path:  # Skip if conversion failed
-                    continue
-                fileext = ".jpg"
+                new_image_path = convert_heic_to_jpg(image_path, originals_folder)
+                if new_image_path:  # Only consider it modified if conversion was successful
+                    modified = True
+                    image_path = new_image_path
+                    fileext = ".jpg"
+                    file = os.path.basename(new_image_path)  # Update the file variable for further processing
 
             # Extract date taken from metadata
             metadata = get_image_metadata(image_path)
             date_taken = get_date_taken(metadata) if prepend_date else None
 
-            # Prepend date to the filename if needed
+            # Prepend date to the filename if needed, only if it doesn't already have a date
             if prepend_date and date_taken:
-                base_name = f"{date_taken}_{os.path.splitext(file)[0]}"
-            else:
-                base_name = os.path.splitext(file)[0]
+                if not re.match(r'^\d{4}-\d{2}-\d{2}_', file):
+                    new_name = f"{date_taken}_{os.path.splitext(file)[0]}{fileext}"
+                    new_path = os.path.join(root, new_name)
+                    try:
+                        # Move original to ORIGINALS folder before renaming
+                        move_to_originals(image_path, originals_folder)
+                        os.rename(image_path, new_path)
+                        modified = True
+                        image_path = new_path
+                    except Exception as e:
+                        log_message(f"Error renaming {file} to {new_name}: {e}", log_directory=directory)
 
-            # If the file ends with a number in the range 001 to 009, apply --DATE and --COMPRESS but skip renaming
-            if re.search(r"00[1-9]\.\w+$", file.lower()):
-                if prepend_date or compress:
-                    # Still apply date prepend or compression
-                    if prepend_date and date_taken:
-                        new_name = f"{date_taken}_{file}"
-                        new_path = os.path.join(root, new_name)
-                        try:
-                            os.rename(image_path, new_path)
-                            log_message(f"Date prepended for {file} to {new_name}", log_directory=directory)
-                        except Exception as e:
-                            log_message(f"Error prepending date for {file} to {new_name}: {e}", log_directory=directory)
+            # Compress the JPG image if necessary
+            if compress and fileext == ".jpg" and "_compressed" not in file.lower():
+                compressed_image_path = compress_jpg(image_path)
+                if compressed_image_path:
+                    # Move original to ORIGINALS folder before compressing
+                    move_to_originals(image_path, originals_folder)
+                    modified = True
+                    image_path = compressed_image_path
+
+            # Ensure _compressed is added anytime compression occurs
+            if compress and fileext == ".jpg" and "_compressed" not in image_path.lower():
+                compressed_image_path = compress_jpg(image_path)
+                if compressed_image_path:
+                    modified = True
+                    image_path = compressed_image_path
+
+            # Skip files ending in 001-009 or 001-009_compressed
+            if re.search(r"00[1-9](_compressed)?\.\w+$", file.lower()):
                 continue  # Skip further renaming/caption processing
+
+            # Check if file still exists before generating a caption
+            if not os.path.exists(image_path):
+                log_message(f"File {image_path} does not exist, skipping caption generation.", log_directory=directory)
+                continue
 
             # Extract OCR text (currently disabled)
             ocr_text = extract_text_from_image(image_path)
 
             # Generate image caption
             caption = generate_caption(image_path)
-
-            # Replace generic captions with the recognized face name if a match is found
-            if os.path.exists(FACE_FOLDER):
-                matched_name = match_faces(image_path)
-                if matched_name:
-                    caption = caption.replace("a Man", matched_name).replace("a Woman", matched_name)
-
+            
             # Combine OCR text and caption, truncate to 47 characters, and PascalCase
             combined_text = (ocr_text + " " + caption).strip()
             pascal_case_name = "".join(
                 word.capitalize() for word in combined_text.split()
             )[:47]  # Truncate to 47 characters
 
-            # Always add the number suffix (001, 002, etc.)
+            # Rename the file if a new name was generated
             if pascal_case_name:
                 base_name = pascal_case_name
                 if prepend_date and date_taken:
@@ -309,8 +353,12 @@ def process_images(directory, prepend_date=False, compress=False):
                 new_name = resolve_conflict(root, base_name, fileext)
                 new_path = os.path.join(root, new_name)
                 try:
+                    # Move original to ORIGINALS folder before renaming
+                    if not modified:  # Ensure we don't double-move the file
+                        move_to_originals(image_path, originals_folder)
                     os.rename(image_path, new_path)
-                    log_message(f"Renamed {file} to {new_name}", log_directory=directory)
+                    modified = True
+                    image_path = new_path
                 except Exception as e:
                     log_message(f"Error renaming {file} to {new_name}: {e}", log_directory=directory)
 
@@ -318,6 +366,7 @@ if __name__ == "__main__":
     # Check for command-line arguments
     prepend_date = "--DATE" in sys.argv
     compress = "--COMPRESS" in sys.argv
+    hashimages = "--HASH" in sys.argv
 
     # Get the directory from the command-line argument if provided
     if len(sys.argv) > 1:
@@ -330,4 +379,5 @@ if __name__ == "__main__":
         print(f"Error: The provided directory '{directory}' does not exist.")
         sys.exit(1)
 
-    process_images(directory, prepend_date, compress)
+    process_images(directory, prepend_date, compress, hashimages)
+
