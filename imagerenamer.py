@@ -10,8 +10,7 @@ Setup Instructions:
    (Optional: pytesseract if you plan to enable OCR)
 2. Ensure Tesseract-OCR is installed if OCR is used. Set the Tesseract path in the script if necessary.
 3. Run the script from the command line:
-   python ImageRenamer.py <directory_path>
-   (Use --DATE parameter if you want to prepend date taken to the file names)
+   python ImageRenamer.py <directory_path> [--DATE]
 
 Supported Image Formats: .jpg, .jpeg, .jfif, .png, .bmp, .gif, .webp, .heic
 """
@@ -20,7 +19,7 @@ import os
 import sys
 import re
 from datetime import datetime
-from PIL import Image
+from PIL import Image, ExifTags
 from transformers import BlipProcessor, BlipForConditionalGeneration
 
 # Global constant for supported image file formats
@@ -28,10 +27,7 @@ SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".jfif", ".png", ".bmp", ".gif", ".webp
 
 # Initialize the BLIP model and processor for image captioning
 processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-model = BlipForConditionalGeneration.from_pretrained(
-    "Salesforce/blip-image-captioning-base"
-)
-
+model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
 
 def extract_text_from_image(image_path):
     """Extract text from an image using OCR (placeholder, as OCR is disabled)."""
@@ -45,19 +41,35 @@ def extract_text_from_image(image_path):
         log_message(f"Error extracting text from {image_path}: {e}")
         return ""
 
-
-def generate_caption(image_path):
-    """Generate a caption for an image using the BLIP model."""
+def get_image_metadata(image_path):
+    """Extract metadata from an image."""
     try:
-        image = Image.open(image_path).convert("RGB")
-        inputs = processor(image, return_tensors="pt")
-        out = model.generate(**inputs)
-        caption = processor.decode(out[0], skip_special_tokens=True)
-        return caption.strip()
+        image = Image.open(image_path)
+        exif_data = image._getexif()
+        metadata = {}
+        
+        if exif_data:
+            for tag, value in exif_data.items():
+                decoded = ExifTags.TAGS.get(tag, tag)
+                metadata[decoded] = value
+                
+        return metadata
     except Exception as e:
-        log_message(f"Error generating caption for {image_path}: {e}")
-        return ""
+        log_message(f"Error extracting metadata from {image_path}: {e}")
+        return {}
 
+def get_date_taken(metadata):
+    """Extract the date the photo was taken from the metadata."""
+    try:
+        if 'DateTimeOriginal' in metadata:
+            return datetime.strptime(metadata['DateTimeOriginal'], '%Y:%m:%d %H:%M:%S').strftime('%Y-%m-%d')
+        elif 'DateTime' in metadata:
+            return datetime.strptime(metadata['DateTime'], '%Y:%m:%d %H:%M:%S').strftime('%Y-%m-%d')
+        else:
+            return None
+    except Exception as e:
+        log_message(f"Error extracting date taken from metadata: {e}")
+        return None
 
 def resolve_conflict(directory, base_name, fileext):
     """Resolve naming conflicts by appending a numeric suffix to the base name."""
@@ -67,7 +79,6 @@ def resolve_conflict(directory, base_name, fileext):
         if not os.path.exists(os.path.join(directory, new_filename)):
             return new_filename
         counter += 1
-
 
 def log_message(message, log_filename="ImageRenamer_Log.txt", log_directory="."):
     """Log a message with a timestamp to a specified log file in the target directory."""
@@ -79,14 +90,13 @@ def log_message(message, log_filename="ImageRenamer_Log.txt", log_directory=".")
     except Exception as e:
         print(f"Error writing to log file: {e}")
 
-
-def process_images(directory):
+def process_images(directory, prepend_date=False):
     """Process images in the specified directory: rename them based on extracted text and generated captions."""
     files_exist = any(
         file.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
         for file in os.listdir(directory)
     )
-
+    
     if not files_exist:
         log_message("No image files found with supported extensions.")
         print("No image files found with supported extensions.")
@@ -96,15 +106,23 @@ def process_images(directory):
         for file in files:
             # Skip files that end with a number in the range 001 to 009
             if re.search(r"00[1-9]\.\w+$", file.lower()):
-                log_message(
-                    f"Skipping {file}: ends with a number in the range 001-009."
-                )
+                log_message(f"Skipping {file}: ends with a number in the range 001-009.")
                 continue
 
             # Process files with supported image extensions
             if file.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
                 image_path = os.path.join(root, file)
                 fileext = os.path.splitext(image_path)[1].lower()
+
+                # Extract date taken from metadata
+                metadata = get_image_metadata(image_path)
+                date_taken = get_date_taken(metadata) if prepend_date else None
+
+                # Prepend date to the filename if needed
+                if prepend_date and date_taken:
+                    base_name = f"{date_taken}_{os.path.splitext(file)[0]}"
+                else:
+                    base_name = os.path.splitext(file)[0]
 
                 # Extract OCR text (currently disabled)
                 ocr_text = extract_text_from_image(image_path)
@@ -116,13 +134,14 @@ def process_images(directory):
                 combined_text = (ocr_text + " " + caption).strip()
                 pascal_case_name = "".join(
                     word.capitalize() for word in combined_text.split()
-                )[
-                    :47
-                ]  # Truncate to 47 characters
+                )[:47]  # Truncate to 47 characters
 
                 # Always add the number suffix (001, 002, etc.)
                 if pascal_case_name:
                     base_name = pascal_case_name
+                    if prepend_date and date_taken:
+                        base_name = f"{date_taken}_{base_name}"
+
                     new_name = resolve_conflict(root, base_name, fileext)
                     new_path = os.path.join(root, new_name)
                     try:
@@ -130,7 +149,6 @@ def process_images(directory):
                         log_message(f"Renamed {file} to {new_name}")
                     except Exception as e:
                         log_message(f"Error renaming {file} to {new_name}: {e}")
-
 
 if __name__ == "__main__":
     # Check for command-line arguments
@@ -147,4 +165,4 @@ if __name__ == "__main__":
         print(f"Error: The provided directory '{directory}' does not exist.")
         sys.exit(1)
 
-    process_images(directory)
+    process_images(directory, prepend_date)
