@@ -1,0 +1,16 @@
+[2024-08-14 13:04:03] Error generating caption for c:\users\tedth\downloads\7cae4e4e-9693-4e64-ad51-92956408b211.pdf: name 'Image' is not defined
+[2024-08-14 13:04:03] TESTING: Renamed 7cae4e4e-9693-4e64-ad51-92956408b211.pdf to DownloadedFrom:Https://clairebahn.com/rebrand-y001.pdf
+[2024-08-14 13:04:03] Error generating caption for c:\users\tedth\downloads\8d37f735-efea-471a-b54b-6178f2092d72.pdf: name 'Image' is not defined
+[2024-08-14 13:04:03] TESTING: Renamed 8d37f735-efea-471a-b54b-6178f2092d72.pdf to ResultsReportForTedTherriaultDateCompleted:May2001.pdf
+[2024-08-14 13:04:03] Error generating caption for c:\users\tedth\downloads\b3083917-f57e-44f9-87c9-4e08cbd55504.pdf: name 'Image' is not defined
+[2024-08-14 13:04:03] TESTING: Renamed b3083917-f57e-44f9-87c9-4e08cbd55504.pdf to ListOfStateAgenciesAndHigherEducationInstitutio001.pdf
+[2024-08-14 13:04:03] Error generating caption for c:\users\tedth\downloads\be0c518d-ecad-4dba-8feb-d994bdc6cd50.pdf: name 'Image' is not defined
+[2024-08-14 13:04:03] TESTING: Renamed be0c518d-ecad-4dba-8feb-d994bdc6cd50.pdf to AcronymTerm/meaningAaaAreaAgenciesOnAgingAarpAm001.pdf
+[2024-08-14 13:04:04] Error generating caption for c:\users\tedth\downloads\d63de46b-ce3a-48a9-8ab4-34f42615ad4d.pdf: name 'Image' is not defined
+[2024-08-14 13:04:04] TESTING: Renamed d63de46b-ce3a-48a9-8ab4-34f42615ad4d.pdf to AProductOfTheLow-incomeWorkingFamiliesProjectIs001.pdf
+[2024-08-14 13:04:04] Error generating caption for c:\users\tedth\downloads\e036524c-c327-430a-9ba5-d0a00f8ac0d7.pdf: name 'Image' is not defined
+[2024-08-14 13:04:04] TESTING: Renamed e036524c-c327-430a-9ba5-d0a00f8ac0d7.pdf to July2013|Number11.193Olympia,WashingtonX-offend001.pdf
+[2024-08-14 13:04:05] Error generating caption for c:\users\tedth\downloads\fc91780a-4d6c-46ec-ab74-81f7ecd6776a.pdf: name 'Image' is not defined
+[2024-08-14 13:04:05] TESTING: Renamed fc91780a-4d6c-46ec-ab74-81f7ecd6776a.pdf to July2011|Number11.160(revised)Olympia,Washingto001.pdf
+[2024-08-14 13:04:09] Error generating caption for c:\users\tedth\downloads\NonProfit Helpful Documents\4a850be7-48c7-4b62-8f50-87b6b56e6e0d.pdf: name 'Image' is not defined
+[2024-08-14 13:04:09] TESTING: Renamed 4a850be7-48c7-4b62-8f50-87b6b56e6e0d.pdf to StartingANonprofitInWashingtonStateWhatYouNeedT001.pdf

@@ -1,0 +1,47 @@
+repositoryname.txt
+gitsetup.txt
+/vs                                           # 34
+node_modules                                  # 32
+/dist                                         # 32
+.DS_Store                                     # 31
+.env.local                                    # 31
+.env.*.local                                  # 31
+.idea                                         # 31
+.vscode                                       # 31
+*.suo                                         # 31
+*.ntvs*                                       # 31
+*.njsproj                                     # 31
+*.sln                                         # 31
+*.sw?                                         # 31
+npm-debug.log*                                # 30
+yarn-debug.log*                               # 30
+yarn-error.log*                               # 30
+pnpm-debug.log*                               # 29
+*.log                                         # 3
+*.user                                        # 3
+[Ll]og/                                       # 3
+[Aa][Rr][Mm]/                                 # 2
+[Aa][Rr][Mm]64/                               # 2
+[Bb]in/                                       # 2
+[Dd]ebug/                                     # 2
+[Dd]ebugPublic/                               # 2
+[Rr]elease/                                   # 2
+[Rr]eleases/                                  # 2
+[Oo]bj/                                       # 2
+artifacts/                                    # 2
+AppPackages/                                  # 2
+BundleArtifacts/                              # 2
+*.pfx                                         # 2
+*.publishsettings                             # 2
+Backup*/                                      # 2
+*.mdf                                         # 2
+*.ldf                                         # 2
+# Ignore Python bytecode
+__pycache__/
+*.py[cod]
+# Ignore virtual environments
+*venv*/
+# Ignore other common files and directories
+.env
+.DS_Store
+*.log
