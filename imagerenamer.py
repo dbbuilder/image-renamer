@@ -22,7 +22,6 @@ Supported Image Formats: .jpg, .jpeg, .jfif, .png, .bmp, .gif, .webp, .heic
 import os
 import sys
 import re
-import cv2
 import shutil
 import hashlib
 from datetime import datetime
@@ -32,35 +31,34 @@ from transformers import BlipProcessor, BlipForConditionalGeneration
 from azure.cognitiveservices.vision.face import FaceClient
 from msrest.authentication import CognitiveServicesCredentials
 
+# Global Constants
+SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".jfif", ".png", ".bmp", ".gif", ".webp", ".heic"]
+LOG_FILENAME = "ImageRenamer_Log.txt"
+FACE_FOLDER = "path_to_face_folder"  # Update this path as needed
+FACE_API_KEY = "YOUR_AZURE_FACE_API_KEY"
+FACE_API_ENDPOINT = "YOUR_AZURE_FACE_API_ENDPOINT"
+JPEG_QUALITY = 70
+MAX_RESOLUTION = (1920, 1080)
+
 # Register HEIF/HEIC format with Pillow
 register_heif_opener()
-
-# Global constant for supported image file formats
-SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".jfif", ".png", ".bmp", ".gif", ".webp", ".heic"]
 
 # Initialize the BLIP model and processor for image captioning
 processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
 model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
 
 # Set up your Azure Face API credentials
-FACE_API_KEY = "YOUR_AZURE_FACE_API_KEY"
-FACE_API_ENDPOINT = "YOUR_AZURE_FACE_API_ENDPOINT"
-
 face_client = FaceClient(FACE_API_ENDPOINT, CognitiveServicesCredentials(FACE_API_KEY))
 
-# Constant for the face folder path
-FACE_FOLDER = "path_to_face_folder"  # Update this path as needed
-
-def log_message(message, log_filename="ImageRenamer_Log.txt", log_directory="."):
+def log_message(message, log_directory):
     """Log a message with a timestamp to a specified log file in the target directory."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_path = os.path.join(log_directory, log_filename)
+    log_path = os.path.join(log_directory, LOG_FILENAME)
     try:
         with open(log_path, "a", encoding="utf-8") as log_file:
             log_file.write(f"[{timestamp}] {message}\n")
     except Exception as e:
         print(f"Error writing to log file: {e}")
-
 
 def create_originals_folder(directory):
     """Create an 'ORIGINALS' folder in the specified directory."""
@@ -70,10 +68,10 @@ def create_originals_folder(directory):
             os.makedirs(originals_path)
         return originals_path
     except Exception as e:
-        log_message(f"Error creating ORIGINALS folder in {directory}: {e}")
+        log_message(f"Error creating ORIGINALS folder in {directory}: {e}", log_directory=directory)
         return None
 
-def move_to_originals(file_path, originals_folder):
+def move_to_originals(file_path, originals_folder, log_directory):
     """Move the original file to the 'ORIGINALS' folder, ensuring no filename conflicts."""
     try:
         # Ensure the destination filename is unique by appending a date-time stamp if needed
@@ -88,11 +86,11 @@ def move_to_originals(file_path, originals_folder):
             dest_path = os.path.join(originals_folder, new_base_name + extension)
 
         shutil.move(file_path, dest_path)
-        log_message(f"Moved {file_path} to {dest_path}")
+        log_message(f"Moved {file_path} to {dest_path}", log_directory=log_directory)
     except Exception as e:
-        log_message(f"Error moving {file_path} to {originals_folder}: {e}")
+        log_message(f"Error moving {file_path} to {originals_folder}: {e}", log_directory=log_directory)
 
-def hash_image(image_path):
+def hash_image(image_path, log_directory):
     """Compute a hash for the image to identify duplicates."""
     try:
         image = Image.open(image_path)
@@ -101,65 +99,52 @@ def hash_image(image_path):
             hash_obj.update(chunk)
         return hash_obj.hexdigest()
     except Exception as e:
-        log_message(f"Error hashing image {image_path}: {e}")
+        log_message(f"Error hashing image {image_path}: {e}", log_directory=log_directory)
         return None
 
-def convert_heic_to_jpg(image_path, originals_folder):
+def convert_heic_to_jpg(image_path, originals_folder, log_directory):
     """Convert a HEIC image to JPG format while preserving metadata and move the original HEIC file to the 'ORIGINALS' folder."""
     try:
-        # Open the HEIC image using Pillow
+        # Convert HEIC to JPG
         image = Image.open(image_path)
-        
-        # Extract the EXIF data from the HEIC image
         exif_data = image.info.get('exif')
-
-        # Convert to JPG path
         jpg_path = os.path.splitext(image_path)[0] + ".jpg"
-        
-        # Save the image as JPG with the EXIF data
         image.save(jpg_path, "JPEG", exif=exif_data)
 
-        # Move the original HEIC file to the 'ORIGINALS' folder
-        move_to_originals(image_path, originals_folder)
+        # After successful conversion, move the original HEIC file to the ORIGINALS folder
+        move_to_originals(image_path, originals_folder, log_directory)
         
-        log_message(f"Converted {image_path} to {jpg_path} with metadata preserved and moved original HEIC to {originals_folder}")
+        log_message(f"Converted {image_path} to {jpg_path} with metadata preserved and moved original HEIC to {originals_folder}", log_directory=log_directory)
         return jpg_path
     except Exception as e:
-        log_message(f"Error converting HEIC to JPG for {image_path}: {e}")
+        log_message(f"Error converting HEIC to JPG for {image_path}: {e}", log_directory=log_directory)
         return None
-    
-def compress_jpg(image_path, quality=85, max_resolution=(1920, 1080)):
-    """Compress an existing JPG image with adjustable quality and resolution."""
+
+def compress_jpg(image_path, originals_folder, log_directory, quality=JPEG_QUALITY, max_resolution=MAX_RESOLUTION):
+    """Compress an existing JPG image with adjustable quality and resolution, preserving EXIF data."""
     try:
         image = Image.open(image_path)
-        
-        # Resize the image if it's larger than the specified max resolution
         image.thumbnail(max_resolution, Image.Resampling.LANCZOS)
-        
-        # Compress the image
+        exif_data = image.info.get('exif')
         compressed_path = os.path.splitext(image_path)[0] + "_compressed.jpg"
-        image.save(compressed_path, "JPEG", quality=quality)  # Adjust quality for more compression
-        
-        log_message(f"Compressed {image_path} to {compressed_path} with quality={quality} and resolution={max_resolution}")
+        image.save(compressed_path, "JPEG", quality=quality, exif=exif_data)
+        log_message(f"Compressed {image_path} to {compressed_path} with quality={quality} and resolution={max_resolution}, preserving metadata.", log_directory=log_directory)
         return compressed_path
     except Exception as e:
-        log_message(f"Error compressing {image_path}: {e}")
+        log_message(f"Error compressing {image_path}: {e}", log_directory=log_directory)
         return None
 
-
-def extract_text_from_image(image_path):
+def extract_text_from_image(image_path, log_directory):
     """Extract text from an image using OCR (placeholder, as OCR is disabled)."""
     try:
         image = Image.open(image_path)
-        # Use pytesseract to extract text from the image (uncomment if OCR is needed)
-        # text = pytesseract.image_to_string(image)
         text = ""  # Placeholder since OCR is commented out
         return text.strip()
     except Exception as e:
-        log_message(f"Error extracting text from {image_path}: {e}")
+        log_message(f"Error extracting text from {image_path}: {e}", log_directory=log_directory)
         return ""
 
-def generate_caption(image_path):
+def generate_caption(image_path, log_directory):
     """Generate a caption for an image using the BLIP model."""
     try:
         image = Image.open(image_path).convert("RGB")
@@ -168,27 +153,25 @@ def generate_caption(image_path):
         caption = processor.decode(out[0], skip_special_tokens=True)
         return caption.strip()
     except Exception as e:
-        log_message(f"Error generating caption for {image_path}: {e}")
+        log_message(f"Error generating caption for {image_path}: {e}", log_directory=log_directory)
         return ""
 
-def get_image_metadata(image_path):
+def get_image_metadata(image_path, log_directory):
     """Extract metadata from an image."""
     try:
         image = Image.open(image_path)
         exif_data = image._getexif()
         metadata = {}
-        
         if exif_data:
             for tag, value in exif_data.items():
                 decoded = ExifTags.TAGS.get(tag, tag)
                 metadata[decoded] = value
-                
         return metadata
     except Exception as e:
-        log_message(f"Error extracting metadata from {image_path}: {e}")
+        log_message(f"Error extracting metadata from {image_path}: {e}", log_directory=log_directory)
         return {}
 
-def get_date_taken(metadata):
+def get_date_taken(metadata, log_directory):
     """Extract the date the photo was taken from the metadata."""
     try:
         if 'DateTimeOriginal' in metadata:
@@ -198,7 +181,7 @@ def get_date_taken(metadata):
         else:
             return None
     except Exception as e:
-        log_message(f"Error extracting date taken from metadata: {e}")
+        log_message(f"Error extracting date taken from metadata: {e}", log_directory=log_directory)
         return None
 
 def resolve_conflict(directory, base_name, fileext):
@@ -210,157 +193,91 @@ def resolve_conflict(directory, base_name, fileext):
             return new_filename
         counter += 1
 
-
-def move_to_originals(file_path, originals_folder):
-    """Move the original file to the 'ORIGINALS' folder, ensuring no filename conflicts."""
-    try:
-        # Ensure the destination filename is unique by appending a date-time stamp if needed
-        base_name = os.path.splitext(os.path.basename(file_path))[0]
-        extension = os.path.splitext(file_path)[1]
-        dest_path = os.path.join(originals_folder, os.path.basename(file_path))
-
-        # If the file already exists in the ORIGINALS folder, append a timestamp
-        if os.path.exists(dest_path):
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_base_name = f"{base_name}_{timestamp}"
-            dest_path = os.path.join(originals_folder, new_base_name + extension)
-
-        shutil.move(file_path, dest_path)
-        log_message(f"Moved {file_path} to {dest_path}")
-    except Exception as e:
-        log_message(f"Error moving {file_path} to {originals_folder}: {e}")
-        
-
-def process_images(directory, prepend_date=False, compress=False, hashimages=False):
-    """Process images in the specified directory: rename them based on extracted text and generated captions,
-    compress them, and remove duplicates."""
-    
-    files_exist = any(
-        file.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
-        for file in os.listdir(directory)
-    )
-    
-    if not files_exist:
-        log_message("No image files found with supported extensions.", log_directory=directory)
-        print("No image files found with supported extensions.")
-        return  # Exit the function if no matching files are found
-
-    originals_folder = create_originals_folder(directory)
-    duplicates_folder = os.path.join(directory, "DUPLICATES")
-    if not os.path.exists(duplicates_folder):
-        os.makedirs(duplicates_folder)
-
-    seen_hashes = {}
-
+def convert_heic_files(directory, originals_folder, log_directory):
+    """Convert all HEIC files in the directory to JPG while preserving metadata."""
     for root, _, files in os.walk(directory):
         for file in files:
-            image_path = os.path.join(root, file)
-            fileext = os.path.splitext(image_path)[1].lower()
-
-            # Skip the ORIGINALS and DUPLICATES folders
-            if "ORIGINALS" in root or "DUPLICATES" in root:
-                continue
-
-            if hashimages:
-                # Hash the image to detect duplicates
-                image_hash = hash_image(image_path)
-                if image_hash in seen_hashes:
-                    # Move duplicate to DUPLICATES folder
-                    try:
-                        duplicate_name = resolve_conflict(duplicates_folder, os.path.splitext(file)[0], fileext)
-                        duplicate_path = os.path.join(duplicates_folder, duplicate_name)
-                        shutil.move(image_path, duplicate_path)
-                        log_message(f"Moved duplicate {file} to {duplicate_path}", log_directory=directory)
-                    except Exception as e:
-                        log_message(f"Error moving duplicate {file} to {duplicate_path}: {e}", log_directory=directory)
-                    continue
-                else:
-                    seen_hashes[image_hash] = image_path
-
-            # Initially set modified flag to False
-            modified = False
-
-            # Convert HEIC to JPG if needed
+            fileext = os.path.splitext(file)[1].lower()
             if fileext == ".heic":
-                new_image_path = convert_heic_to_jpg(image_path, originals_folder)
-                if new_image_path:  # Only consider it modified if conversion was successful
-                    modified = True
-                    image_path = new_image_path
-                    fileext = ".jpg"
-                    file = os.path.basename(new_image_path)  # Update the file variable for further processing
+                image_path = os.path.join(root, file)
+                convert_heic_to_jpg(image_path, originals_folder, log_directory)
 
-            # Extract date taken from metadata
-            metadata = get_image_metadata(image_path)
-            date_taken = get_date_taken(metadata) if prepend_date else None
+def generate_captions(directory, originals_folder, log_directory):
+    """Generate captions for all image files in the directory."""
+    for root, _, files in os.walk(directory):
+        for file in files:
+            fileext = os.path.splitext(file)[1].lower()
+            if fileext in SUPPORTED_EXTENSIONS:
+                image_path = os.path.join(root, file)
+                # Skip files in the ORIGINALS and DUPLICATES folders
+                if "ORIGINALS" in root or "DUPLICATES" in root:
+                    continue
+                caption = generate_caption(image_path, log_directory)
+                if caption:
+                    pascal_case_name = "".join(
+                        word.capitalize() for word in caption.split()
+                    )[:47]
+                    new_name = resolve_conflict(root, pascal_case_name, fileext)
+                    try:
+                        os.rename(image_path, os.path.join(root, new_name))
+                        move_to_originals(image_path, originals_folder, log_directory)
+                    except Exception as e:
+                        log_message(f"Error renaming {file} to {new_name}: {e}", log_directory=log_directory)
 
-            # Prepend date to the filename if needed, only if it doesn't already have a date
-            if prepend_date and date_taken:
-                if not re.match(r'^\d{4}-\d{2}-\d{2}_', file):
-                    new_name = f"{date_taken}_{os.path.splitext(file)[0]}{fileext}"
+def prepend_dates_to_filenames(directory, originals_folder, log_directory):
+    """Prepend the date taken to the filenames based on EXIF metadata."""
+    for root, _, files in os.walk(directory):
+        for file in files:
+            fileext = os.path.splitext(file)[1].lower()
+            if fileext in SUPPORTED_EXTENSIONS:
+                image_path = os.path.join(root, file)
+                # Skip files in the ORIGINALS and DUPLICATES folders
+                if "ORIGINALS" in root or "DUPLICATES" in root:
+                    continue
+                metadata = get_image_metadata(image_path, log_directory)
+                date_taken = get_date_taken(metadata, log_directory)
+                if date_taken and not re.match(r'^\d{4}-\d{2}-\d{2}_', file):
+                    new_name = f"{date_taken}_{file}"
                     new_path = os.path.join(root, new_name)
                     try:
-                        # Move original to ORIGINALS folder before renaming
-                        move_to_originals(image_path, originals_folder)
                         os.rename(image_path, new_path)
-                        modified = True
-                        image_path = new_path
+                        move_to_originals(image_path, originals_folder, log_directory)
                     except Exception as e:
-                        log_message(f"Error renaming {file} to {new_name}: {e}", log_directory=directory)
+                        log_message(f"Error renaming {file} to {new_name}: {e}", log_directory=log_directory)
 
-            # Compress the JPG image if necessary
-            if compress and fileext == ".jpg" and "_compressed" not in file.lower():
-                compressed_image_path = compress_jpg(image_path)
+def compress_images(directory, originals_folder, log_directory):
+    """Compress all JPG files in the directory while preserving metadata."""
+    for root, _, files in os.walk(directory):
+        for file in files:
+            fileext = os.path.splitext(file)[1].lower()
+            if fileext == ".jpg" and "_compressed" not in file.lower():
+                image_path = os.path.join(root, file)
+                # Skip files in the ORIGINALS and DUPLICATES folders
+                if "ORIGINALS" in root or "DUPLICATES" in root:
+                    continue
+                compressed_image_path = compress_jpg(image_path, originals_folder, log_directory)
                 if compressed_image_path:
-                    # Move original to ORIGINALS folder before compressing
-                    move_to_originals(image_path, originals_folder)
-                    modified = True
-                    image_path = compressed_image_path
+                    move_to_originals(image_path, originals_folder, log_directory)
 
-            # Ensure _compressed is added anytime compression occurs
-            if compress and fileext == ".jpg" and "_compressed" not in image_path.lower():
-                compressed_image_path = compress_jpg(image_path)
-                if compressed_image_path:
-                    modified = True
-                    image_path = compressed_image_path
+def process_images(directory, prepend_date=False, compress=False, hashimages=False):
+    """Process images in the specified directory by running them through multiple passes."""
+    
+    originals_folder = create_originals_folder(directory)
+    log_directory = directory
+    
+    # Pass 1: Convert HEIC to JPG
+    convert_heic_files(directory, originals_folder, log_directory)
 
-            # Skip files ending in 001-009 or 001-009_compressed
-            if re.search(r"00[1-9](_compressed)?\.\w+$", file.lower()):
-                continue  # Skip further renaming/caption processing
+    # Pass 2: Generate captions
+    generate_captions(directory, originals_folder, log_directory)
 
-            # Check if file still exists before generating a caption
-            if not os.path.exists(image_path):
-                log_message(f"File {image_path} does not exist, skipping caption generation.", log_directory=directory)
-                continue
+    # Pass 3: Prepend dates to filenames
+    if prepend_date:
+        prepend_dates_to_filenames(directory, originals_folder, log_directory)
 
-            # Extract OCR text (currently disabled)
-            ocr_text = extract_text_from_image(image_path)
-
-            # Generate image caption
-            caption = generate_caption(image_path)
-            
-            # Combine OCR text and caption, truncate to 47 characters, and PascalCase
-            combined_text = (ocr_text + " " + caption).strip()
-            pascal_case_name = "".join(
-                word.capitalize() for word in combined_text.split()
-            )[:47]  # Truncate to 47 characters
-
-            # Rename the file if a new name was generated
-            if pascal_case_name:
-                base_name = pascal_case_name
-                if prepend_date and date_taken:
-                    base_name = f"{date_taken}_{base_name}"
-
-                new_name = resolve_conflict(root, base_name, fileext)
-                new_path = os.path.join(root, new_name)
-                try:
-                    # Move original to ORIGINALS folder before renaming
-                    if not modified:  # Ensure we don't double-move the file
-                        move_to_originals(image_path, originals_folder)
-                    os.rename(image_path, new_path)
-                    modified = True
-                    image_path = new_path
-                except Exception as e:
-                    log_message(f"Error renaming {file} to {new_name}: {e}", log_directory=directory)
+    # Pass 4: Compress JPG files
+    if compress:
+        compress_images(directory, originals_folder, log_directory)
 
 if __name__ == "__main__":
     # Check for command-line arguments
@@ -380,4 +297,3 @@ if __name__ == "__main__":
         sys.exit(1)
 
     process_images(directory, prepend_date, compress, hashimages)
-
